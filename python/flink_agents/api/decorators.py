@@ -38,13 +38,49 @@ def action(*listen_events: Tuple[Type[Event], ...]) -> Callable:
     AssertionError
         If no events are provided to listen to.
     """
-    assert len(listen_events) > 0, 'action must have at least one event type to listen to'
+    assert len(listen_events) > 0, (
+        "action must have at least one event type to listen to"
+    )
 
     for event in listen_events:
-        assert issubclass(event, Event), 'action must only listen to event types.'
+        assert issubclass(event, Event), "action must only listen to event types."
 
     def decorator(func: Callable) -> Callable:
         func._listen_events = listen_events
         return func
 
     return decorator
+
+
+def chat_model(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a chat model.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a chat model.
+    """
+    func._is_chat_model = True
+    return func
+
+
+def tool(func: Callable) -> Callable:
+    """Decorator for marking a function declaring a chat model.
+
+    Parameters
+    ----------
+    func : Callable
+        Function to be decorated.
+
+    Returns:
+    -------
+    Callable
+        Decorator function that marks the target function declare a tools.
+    """
+    func._is_tool = True
+    return func

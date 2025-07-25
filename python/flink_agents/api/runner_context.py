@@ -18,6 +18,8 @@
 from abc import ABC, abstractmethod
 
 from flink_agents.api.event import Event
+from flink_agents.api.memory_object import MemoryObject
+from flink_agents.api.resource import Resource, ResourceType
 
 
 class RunnerContext(ABC):
@@ -34,4 +36,26 @@ class RunnerContext(ABC):
         ----------
         event : Event
             The event to be processed by the agent system.
+        """
+
+    @abstractmethod
+    def get_resource(self, name: str, type: ResourceType) -> Resource:
+        """Get resource from context.
+
+        Parameters
+        ----------
+        name : str
+            The name of the resource.
+        type : ResourceType
+            The type of the resource.
+        """
+
+    @abstractmethod
+    def get_short_term_memory(self) -> MemoryObject:
+        """Get the short-term memory.
+
+        Returns:
+        -------
+        MemoryObject
+          The root object of the short-term memory.
         """

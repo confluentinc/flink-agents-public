@@ -21,7 +21,10 @@ import cloudpickle
 from typing_extensions import override
 
 from flink_agents.api.event import Event
+from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.plan.agent_plan import AgentPlan
+from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 
 
 class FlinkRunnerContext(RunnerContext):
@@ -30,7 +33,9 @@ class FlinkRunnerContext(RunnerContext):
     This context allows access to event handling.
     """
 
-    def __init__(self, j_runner_context: Any) -> None:
+    __agent_plan: AgentPlan
+
+    def __init__(self, j_runner_context: Any, agent_plan_json: str) -> None:
         """Initialize a flink runner context with the given java runner context.
 
         Parameters
@@ -39,6 +44,7 @@ class FlinkRunnerContext(RunnerContext):
             Java runner context used to synchronize data between Python and Java.
         """
         self._j_runner_context = j_runner_context
+        self.__agent_plan = AgentPlan.model_validate_json(agent_plan_json)
 
     @override
     def send_event(self, event: Event) -> None:
@@ -49,13 +55,34 @@ class FlinkRunnerContext(RunnerContext):
         event : Event
             The event to be processed by the agent system.
         """
+        class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
         try:
-            class_path = f"{event.__class__.__module__}.{event.__class__.__qualname__}"
             self._j_runner_context.sendEvent(class_path, cloudpickle.dumps(event))
         except Exception as e:
             err_msg = "Failed to send event " + class_path + " to runner context"
             raise RuntimeError(err_msg) from e
 
-def create_flink_runner_context(j_runner_context: Any) -> FlinkRunnerContext:
+    @override
+    def get_resource(self, name: str, type: ResourceType) -> Resource:
+        return self.__agent_plan.get_resource(name, type)
+
+    @override
+    def get_short_term_memory(self) -> FlinkMemoryObject:
+        """Get the short-term memory object associated with this context.
+
+        Returns:
+        -------
+        MemoryObject
+            The short-term memory object that can be used to access and modify
+            temporary state data.
+        """
+        try:
+            return FlinkMemoryObject(self._j_runner_context.getShortTermMemory())
+        except Exception as e:
+            err_msg = "Failed to get short-term memory of runner context"
+            raise RuntimeError(err_msg) from e
+
+
+def create_flink_runner_context(j_runner_context: Any, agent_plan_json: str) -> FlinkRunnerContext:
     """Used to create a FlinkRunnerContext Python object in Pemja environment."""
-    return FlinkRunnerContext(j_runner_context)
+    return FlinkRunnerContext(j_runner_context, agent_plan_json)
