@@ -18,8 +18,11 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JacksonException;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonParser;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.ObjectCodec;
@@ -27,6 +30,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.Deseriali
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JavaType;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonDeserializer;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.JsonNode;
+import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 
 import java.io.IOException;
@@ -88,6 +92,47 @@ public class AgentPlanJsonDeserializer extends StdDeserializer<AgentPlan> {
             }
         }
 
-        return new AgentPlan(actions, actionsByEvent);
+        // Deserialize resource providers
+        JsonNode resourceProvidersNode = node.get("resource_providers");
+        JavaType resourceProviderType = ctx.constructType(ResourceProvider.class);
+        JsonDeserializer<?> resourceProviderDeserializer =
+                ctx.findContextualValueDeserializer(resourceProviderType, null);
+        Map<ResourceType, Map<String, ResourceProvider>> resourceProviders = new HashMap<>();
+        if (resourceProvidersNode != null && resourceProvidersNode.isObject()) {
+            Iterator<Map.Entry<String, JsonNode>> iterator = resourceProvidersNode.fields();
+            while (iterator.hasNext()) {
+                Map.Entry<String, JsonNode> entry = iterator.next();
+                String resourceType = entry.getKey();
+                JsonNode providers = entry.getValue();
+                Iterator<Map.Entry<String, JsonNode>> providerIterator = providers.fields();
+                Map<String, ResourceProvider> nameToProvider = new HashMap<>();
+                while (providerIterator.hasNext()) {
+                    Map.Entry<String, JsonNode> providerEntry = providerIterator.next();
+                    String name = providerEntry.getKey();
+                    JsonNode provider = providerEntry.getValue();
+                    JsonParser resourceProviderParser = codec.treeAsTokens(provider);
+                    ResourceProvider resourceProvider =
+                            (ResourceProvider)
+                                    resourceProviderDeserializer.deserialize(
+                                            resourceProviderParser, ctx);
+                    nameToProvider.put(name, resourceProvider);
+                }
+                resourceProviders.put(ResourceType.fromValue(resourceType), nameToProvider);
+            }
+        }
+
+        // Deserialize config data
+        JsonNode configNode = node.get("config");
+        Map<String, Object> configData = new HashMap<>();
+        if (configNode != null && configNode.isObject()) {
+            JsonNode configDataNode = configNode.get("conf_data");
+            if (configDataNode != null && configDataNode.isObject()) {
+                ObjectMapper mapper = new ObjectMapper();
+                configData = mapper.convertValue(configDataNode, Map.class);
+            }
+        }
+        AgentConfiguration config = new AgentConfiguration(configData);
+
+        return new AgentPlan(actions, actionsByEvent, resourceProviders, config);
     }
 }

@@ -22,6 +22,7 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.annotation.JsonPro
 
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.Objects;
 
 /** Represent a Java function. */
 public class JavaFunction implements Function {
@@ -38,7 +39,7 @@ public class JavaFunction implements Function {
     @JsonProperty(FIELD_NAME_PARAMETER_TYPES)
     private final Class<?>[] parameterTypes;
 
-    @JsonIgnore private final Method method;
+    @JsonIgnore private transient Method method;
 
     public JavaFunction(
             @JsonProperty(FIELD_NAME_QUAL_NAME) String qualName,
@@ -71,7 +72,10 @@ public class JavaFunction implements Function {
         return parameterTypes;
     }
 
-    public Method getMethod() {
+    public Method getMethod() throws ClassNotFoundException, NoSuchMethodException {
+        if (method == null) {
+            this.method = Class.forName(qualName).getMethod(methodName, parameterTypes);
+        }
         return method;
     }
 
@@ -86,14 +90,19 @@ public class JavaFunction implements Function {
         }
 
         JavaFunction that = (JavaFunction) o;
-        return this.qualName.equals(that.qualName)
-                && this.methodName.equals(that.methodName)
+        return Objects.equals(this.qualName, that.qualName)
+                && Objects.equals(this.methodName, that.methodName)
                 && Arrays.equals(this.parameterTypes, that.parameterTypes);
     }
 
     @Override
+    public int hashCode() {
+        return Objects.hash(qualName, methodName, Arrays.hashCode(parameterTypes));
+    }
+
+    @Override
     public Object call(Object... args) throws Exception {
-        return method.invoke(null, args);
+        return getMethod().invoke(null, args);
     }
 
     @Override

@@ -17,20 +17,22 @@
 #################################################################################
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Callable
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class ResourceType(Enum):
     """Type enum of resource.
 
-    Currently, only support chat_models and tools.
+    Currently, support chat_model, chat_model_server, tool and prompt.
     """
 
     CHAT_MODEL = "chat_model"
+    CHAT_MODEL_CONNECTION = "chat_model_connection"
     TOOL = "tool"
     # EMBEDDING_MODEL = "embedding_model"
-    # PROMPT = "prompt"
+    PROMPT = "prompt"
     # VECTOR_STORE = "vector_store"
     # MCP_SERVER = "mcp_server"
 
@@ -46,11 +48,15 @@ class Resource(BaseModel, ABC):
     ----------
     name : str
         The name of the resource.
-    type : ResourceType
-        The type of the resource.
+    get_resource : Callable[[str, ResourceType], "Resource"]
+        Get other resource object declared in the same Agent. The first argument is
+        resource name and the second argument is resource type.
     """
 
     name: str
+    get_resource: Callable[[str, ResourceType], "Resource"] = Field(
+        exclude=True, default=None
+    )
 
     @classmethod
     @abstractmethod

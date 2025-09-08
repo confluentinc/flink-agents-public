@@ -15,13 +15,16 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agent import Agent
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.plan.action import Action
+from flink_agents.plan.actions.action import Action
+from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
+from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
@@ -30,7 +33,9 @@ from flink_agents.plan.resource_provider import (
     PythonSerializableResourceProvider,
     ResourceProvider,
 )
-from flink_agents.plan.tools.function_tool import FunctionTool
+from flink_agents.plan.tools.function_tool import from_callable
+
+BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION]
 
 
 class AgentPlan(BaseModel):
@@ -49,6 +54,7 @@ class AgentPlan(BaseModel):
     actions: Dict[str, Action]
     actions_by_event: Dict[str, List[str]]
     resource_providers: Optional[Dict[ResourceType, Dict[str, ResourceProvider]]] = None
+    config: Optional[AgentConfiguration] = None
     __resources: Dict[ResourceType, Dict[str, Resource]] = {}
 
     @field_serializer("resource_providers")
@@ -112,11 +118,11 @@ class AgentPlan(BaseModel):
         return self
 
     @staticmethod
-    def from_agent(agent: Agent) -> "AgentPlan":
+    def from_agent(agent: Agent, config: AgentConfiguration) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
         actions_by_event = {}
-        for action in _get_actions(agent):
+        for action in _get_actions(agent) + BUILT_IN_ACTIONS:
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
             for event_type in action.listen_event_types:
@@ -138,6 +144,7 @@ class AgentPlan(BaseModel):
             actions=actions,
             actions_by_event=actions_by_event,
             resource_providers=resource_providers,
+            config=config,
         )
 
     def get_actions(self, event_type: str) -> List[Action]:
@@ -155,6 +162,38 @@ class AgentPlan(BaseModel):
         """
         return [self.actions[name] for name in self.actions_by_event[event_type]]
 
+    def get_action_config(self, action_name: str) -> Dict[str, Any]:
+        """Get config of the action.
+
+        Parameters
+        ----------
+        action_name : str
+            The name of the action.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The config of action.
+        """
+        return self.actions[action_name].config
+
+    def get_action_config_value(self, action_name: str, key: str) -> Any:
+        """Get config of the action.
+
+        Parameters
+        ----------
+        action_name : str
+            The name of the action.
+        key : str
+            The name of the option.
+
+        Returns:
+        -------
+        Dict[str, Any]
+            The option value of the action config.
+        """
+        return self.actions[action_name].config.get(key, None)
+
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource from agent plan.
 
@@ -169,7 +208,8 @@ class AgentPlan(BaseModel):
             self.__resources[type] = {}
         if name not in self.__resources[type]:
             resource_provider = self.resource_providers[type][name]
-            self.__resources[type][name] = resource_provider.provide()
+            resource = resource_provider.provide(get_resource=self.get_resource, config=self.config)
+            self.__resources[type][name] = resource
         return self.__resources[type][name]
 
 
@@ -210,42 +250,105 @@ def _get_actions(agent: Agent) -> List[Action]:
                     ],
                 )
             )
+    for name, action in agent.actions.items():
+        actions.append(
+            Action(
+                name=name,
+                exec=PythonFunction.from_callable(action[1]),
+                listen_event_types=[
+                    f"{event_type.__module__}.{event_type.__name__}"
+                    for event_type in action[0]
+                ],
+                config=action[2],
+            )
+        )
     return actions
 
 
 def _get_resource_providers(agent: Agent) -> List[ResourceProvider]:
     resource_providers = []
     for name, value in agent.__class__.__dict__.items():
-        if hasattr(value, "_is_chat_model"):
+        if hasattr(value, "_is_chat_model_setup"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
             if callable(value):
                 clazz, kwargs = value()
-                module = clazz.__module__
                 provider = PythonResourceProvider(
                     name=name,
                     type=clazz.resource_type(),
-                    module=module,
+                    module=clazz.__module__,
                     clazz=clazz.__name__,
                     kwargs=kwargs,
                 )
                 resource_providers.append(provider)
-        if hasattr(value, "_is_tool"):
+        elif hasattr(value, "_is_chat_model_connection"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+
+            if callable(value):
+                clazz, kwargs = value()
+                provider = PythonResourceProvider(
+                    name=name,
+                    type=clazz.resource_type(),
+                    module=clazz.__module__,
+                    clazz=clazz.__name__,
+                    kwargs=kwargs,
+                )
+                resource_providers.append(provider)
+        elif hasattr(value, "_is_tool"):
             if isinstance(value, staticmethod):
                 value = value.__func__
 
             if callable(value):
                 # TODO: support other tool type.
-                func = PythonFunction.from_callable(value)
-                tool = FunctionTool(name=name, func=func)
-                provider = PythonSerializableResourceProvider(
-                    name=tool.name,
-                    type=tool.resource_type(),
-                    serialized=tool.model_dump(),
-                    module=tool.__module__,
-                    clazz=tool.__class__.__name__,
-                    resource=tool,
+                tool = from_callable(name=name, func=value)
+                resource_providers.append(
+                    PythonSerializableResourceProvider.from_resource(
+                        name=name, resource=tool
+                    )
                 )
-                resource_providers.append(provider)
+        elif hasattr(value, "_is_prompt"):
+            if isinstance(value, staticmethod):
+                value = value.__func__
+            prompt = value()
+            resource_providers.append(
+                PythonSerializableResourceProvider.from_resource(
+                    name=name, resource=prompt
+                )
+            )
+
+    for name, prompt in agent.resources[ResourceType.PROMPT].items():
+        resource_providers.append(
+            PythonSerializableResourceProvider.from_resource(name=name, resource=prompt)
+        )
+
+    for name, func in agent.resources[ResourceType.TOOL].items():
+        tool = from_callable(name=name, func=func)
+        resource_providers.append(
+            PythonSerializableResourceProvider.from_resource(name=name, resource=tool)
+        )
+
+    for name, chat_model in agent.resources[ResourceType.CHAT_MODEL].items():
+        clazz, kwargs = chat_model
+        provider = PythonResourceProvider(
+            name=name,
+            type=clazz.resource_type(),
+            module=clazz.__module__,
+            clazz=clazz.__name__,
+            kwargs=kwargs,
+        )
+        resource_providers.append(provider)
+
+    for name, connection in agent.resources[ResourceType.CHAT_MODEL_CONNECTION].items():
+        clazz, kwargs = connection
+        provider = PythonResourceProvider(
+            name=name,
+            type=clazz.resource_type(),
+            module=clazz.__module__,
+            clazz=clazz.__name__,
+            kwargs=kwargs,
+        )
+        resource_providers.append(provider)
+
     return resource_providers

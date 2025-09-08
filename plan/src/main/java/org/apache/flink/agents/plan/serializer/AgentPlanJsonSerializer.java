@@ -18,13 +18,16 @@
 
 package org.apache.flink.agents.plan.serializer;
 
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.Action;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.core.JsonGenerator;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.SerializerProvider;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ser.std.StdSerializer;
 
 import java.io.IOException;
+import java.util.Map;
 
 public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
 
@@ -76,6 +79,50 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
                                         e);
                             }
                         });
+        jsonGenerator.writeEndObject();
+
+        // Serialize resource providers
+        jsonGenerator.writeFieldName("resource_providers");
+        jsonGenerator.writeStartObject();
+        for (Map.Entry<ResourceType, Map<String, ResourceProvider>> pair :
+                agentPlan.getResourceProviders().entrySet()) {
+            ResourceType type = pair.getKey();
+            Map<String, ResourceProvider> nameToResourceProvider = pair.getValue();
+            jsonGenerator.writeFieldName(type.getValue());
+            jsonGenerator.writeStartObject();
+            nameToResourceProvider.forEach(
+                    (name, resourceProvider) -> {
+                        try {
+                            jsonGenerator.writeFieldName(name);
+                            serializerProvider
+                                    .findValueSerializer(ResourceProvider.class)
+                                    .serialize(resourceProvider, jsonGenerator, serializerProvider);
+                        } catch (IOException e) {
+                            throw new RuntimeException(
+                                    "Error writing resource provider for: " + name, e);
+                        }
+                    });
+            jsonGenerator.writeEndObject();
+        }
+        jsonGenerator.writeEndObject();
+
+        // Serialize config data
+        jsonGenerator.writeFieldName("config");
+        jsonGenerator.writeStartObject();
+        jsonGenerator.writeFieldName("conf_data");
+        jsonGenerator.writeStartObject();
+        agentPlan
+                .getConfigData()
+                .forEach(
+                        (key, value) -> {
+                            try {
+                                jsonGenerator.writeFieldName(key);
+                                jsonGenerator.writeObject(value);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+        jsonGenerator.writeEndObject();
         jsonGenerator.writeEndObject();
     }
 }

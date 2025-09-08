@@ -15,21 +15,186 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from abc import ABC
+import re
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar, Dict, List, Optional, Sequence, Tuple, Union
 
+from pydantic import Field
 from typing_extensions import override
 
+from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.tools.tool import BaseTool
 
 
-#TODO: Complete BaseChatModel
-class BaseChatModel(Resource, ABC):
-    """Base abstract class of all kinds of chat models.
+class BaseChatModelConnection(Resource, ABC):
+    """Base abstract class for chat model connection.
 
-    Currently, this class is empty just for testing purposes.
+    Responsible for managing model service connection configurations, such as:
+    - Service address (base_url)
+    - API key (api_key)
+    - Connection timeout (timeout)
+    - Model name (model_name)
+    - Authentication information, etc.
+
+    Provides the basic chat interface for direct communication with model services.
+
+    One connection can be shared in multiple chat model setup.
     """
 
     @classmethod
     @override
     def resource_type(cls) -> ResourceType:
+        """Return resource type of class."""
+        return ResourceType.CHAT_MODEL_CONNECTION
+
+    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str],...]] = (
+        re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE),
+        re.compile(r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE),
+    )
+
+    @staticmethod
+    def _extract_reasoning(
+        content: str,
+        patterns: List[re.Pattern[str]] = DEFAULT_REASONING_PATTERNS,
+    ) -> Tuple[str, Optional[str]]:
+        """Extract content within <think></think> tags and clean the remaining content.
+
+        Parameters
+        ----------
+        content: str
+          Original content text
+
+        Returns:
+        -------
+        Tuple[str, Optional[str]]
+          The cleaned content and the reasoning part.
+        """
+        if not content:
+            return "", None
+
+        reasoning_chunks: List[str] = []
+        cleaned = content
+
+        for pat in patterns:
+            matches = pat.findall(cleaned)
+            if matches:
+                reasoning_chunks.extend(m.strip() for m in matches if m.strip())
+                cleaned = pat.sub("", cleaned)
+
+        reasoning = "\n\n".join(reasoning_chunks) if reasoning_chunks else None
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        cleaned = re.sub(r" {2,}", " ", cleaned)
+        cleaned = cleaned.strip()
+        return cleaned, reasoning
+
+    @abstractmethod
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: Optional[List[BaseTool]] = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Direct communication with model service for chat conversation.
+
+        Parameters
+        ----------
+        messages : Sequence[ChatMessage]
+            Input message sequence
+        tools : Optional[List]
+            List of tools that can be called by the model
+        **kwargs : Any
+            Additional parameters passed to the model service (e.g., temperature,
+            max_tokens, etc.)
+
+        Returns:
+        -------
+        ChatMessage
+            Model response message
+        """
+
+
+class BaseChatModelSetup(Resource):
+    """Base abstract class for chat model setup.
+
+    Responsible for managing chat configurations, such as:
+    - Prompt templates (prompt)
+    - Available tools (tools)
+    - Generation parameters (temperature, max_tokens, etc.)
+    - Context management
+
+    Internally calls ChatModelConnection to perform actual communication with llm.
+
+    Different chat model setups can share the same chat model connection and contains
+    different chat configurations.
+    """
+
+    connection: str = Field(description="Name of the referenced connection.")
+    prompt: Optional[Union[Prompt, str]] = None
+    tools: Optional[List[str]] = None
+
+    @property
+    @abstractmethod
+    def model_kwargs(self) -> Dict[str, Any]:
+        """Return chat model settings."""
+
+    @classmethod
+    @override
+    def resource_type(cls) -> ResourceType:
+        """Return resource type of class."""
         return ResourceType.CHAT_MODEL
+
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        """Execute chat conversation.
+
+        1. Apply prompt template (if any)
+        2. Bind tools (if any)
+        3. Call ChatModelConnection to perform actual communication
+        4. Process response
+
+        Parameters
+        ----------
+        messages : Sequence[ChatMessage]
+            Input message sequence
+        **kwargs : Any
+            Additional parameters passed to the model service
+
+        Returns:
+        -------
+        ChatMessage
+            Model response message
+        """
+        # Get model connection
+        connection = self.get_resource(
+            self.connection, ResourceType.CHAT_MODEL_CONNECTION
+        )
+
+        # Apply prompt template
+        if self.prompt is not None:
+            if isinstance(self.prompt, str):
+                # Get prompt resource if it's a string
+                prompt = self.get_resource(self.prompt, ResourceType.PROMPT)
+            else:
+                prompt = self.prompt
+
+            input_variable = {}
+            for msg in messages:
+                input_variable.update(msg.extra_args)
+            messages = prompt.format_messages(**input_variable)
+
+        # Bind tools
+        tools = None
+        if self.tools is not None:
+            tools = [
+                self.get_resource(tool_name, ResourceType.TOOL)
+                for tool_name in self.tools
+            ]
+
+        # Call chat model connection to execute chat
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        return connection.chat(messages, tools=tools, **merged_kwargs)

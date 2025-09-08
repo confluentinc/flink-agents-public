@@ -1,0 +1,127 @@
+{
+  "actions": {
+    "first_action": {
+      "name": "first_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
+        "qualname": "PythonAgentPlanCompatibilityTestAgent.first_action"
+      },
+      "listen_event_types": [
+        "flink_agents.api.events.event.InputEvent"
+      ]
+    },
+    "second_action": {
+      "name": "second_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
+        "qualname": "PythonAgentPlanCompatibilityTestAgent.second_action"
+      },
+      "listen_event_types": [
+        "flink_agents.api.events.event.InputEvent",
+        "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent"
+      ]
+    },
+    "chat_model_action": {
+      "name": "chat_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.chat_model_action",
+        "qualname": "process_chat_request_or_tool_response"
+      },
+      "listen_event_types": [
+        "flink_agents.api.events.chat_event.ChatRequestEvent",
+        "flink_agents.api.events.tool_event.ToolResponseEvent"
+      ]
+    },
+    "tool_call_action": {
+      "name": "tool_call_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.tool_call_action",
+        "qualname": "process_tool_request"
+      },
+      "listen_event_types": [
+        "flink_agents.api.events.tool_event.ToolRequestEvent"
+      ]
+    }
+  },
+  "actions_by_event": {
+    "flink_agents.api.events.event.InputEvent": [
+      "first_action",
+      "second_action"
+    ],
+    "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent.MyEvent": [
+      "second_action"
+    ],
+    "flink_agents.api.events.chat_event.ChatRequestEvent": [
+      "chat_model_action"
+    ],
+    "flink_agents.api.events.tool_event.ToolResponseEvent": [
+      "chat_model_action"
+    ],
+    "flink_agents.api.events.tool_event.ToolRequestEvent": [
+      "tool_call_action"
+    ]
+  },
+  "resource_providers": {
+    "chat_model": {
+      "chat_model": {
+        "name": "chat_model",
+        "type": "chat_model",
+        "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
+        "clazz": "MockChatModel",
+        "kwargs": {
+          "name": "chat_model",
+          "prompt": "prompt",
+          "tools": [
+            "add"
+          ]
+        },
+        "__resource_provider_type__": "PythonResourceProvider"
+      }
+    },
+    "tool": {
+      "add": {
+        "name": "add",
+        "type": "tool",
+        "module": "flink_agents.plan.tools.function_tool",
+        "clazz": "FunctionTool",
+        "serialized": {
+          "name": "add",
+          "metadata": {
+            "name": "add",
+            "description": "Calculate the sum of a and b.\n",
+            "args_schema": {
+              "properties": {
+                "a": {
+                  "description": "The first operand",
+                  "title": "A",
+                  "type": "integer"
+                },
+                "b": {
+                  "description": "The second operand",
+                  "title": "B",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "a",
+                "b"
+              ],
+              "title": "add",
+              "type": "object"
+            }
+          },
+          "func": {
+            "func_type": "PythonFunction",
+            "module": "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
+            "qualname": "PythonAgentPlanCompatibilityTestAgent.add"
+          }
+        },
+        "__resource_provider_type__": "PythonSerializableResourceProvider"
+      }
+    }
+  }
+}

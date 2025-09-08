@@ -27,8 +27,6 @@ import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMap
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -37,28 +35,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /** Test for {@link ActionJsonDeserializer}. */
 public class ActionJsonDeserializerTest {
 
-    /**
-     * Reads a JSON file from the resources directory.
-     *
-     * @param resourcePath the path to the resource file
-     * @return the content of the file as a string
-     * @throws IOException if an I/O error occurs
-     */
-    private String readJsonFromResource(String resourcePath) throws IOException {
-        try (InputStream inputStream =
-                getClass().getClassLoader().getResourceAsStream(resourcePath)) {
-            if (inputStream == null) {
-                throw new IOException("Resource not found: " + resourcePath);
-            }
-            byte[] bytes = inputStream.readAllBytes();
-            return new String(bytes, StandardCharsets.UTF_8);
-        }
-    }
-
     @Test
     public void testDeserializeJavaFunction() throws Exception {
         // Read JSON for an Action with JavaFunction from resource file
-        String json = readJsonFromResource("actions/action_java_function.json");
+        String json = Utils.readJsonFromResource("actions/action_java_function.json");
 
         // Deserialize the JSON to an Action
         ObjectMapper mapper = new ObjectMapper();
@@ -80,7 +60,7 @@ public class ActionJsonDeserializerTest {
     @Test
     public void testDeserializePythonFunction() throws IOException {
         // Read JSON for an Action with PythonFunction from resource file
-        String json = readJsonFromResource("actions/action_python_function.json");
+        String json = Utils.readJsonFromResource("actions/action_python_function.json");
 
         // Deserialize the JSON to an Action
         ObjectMapper mapper = new ObjectMapper();
@@ -99,7 +79,7 @@ public class ActionJsonDeserializerTest {
     @Test
     public void testDeserializeInvalidFunctionType() throws IOException {
         // Read JSON with an invalid function type from resource file
-        String json = readJsonFromResource("actions/action_invalid_function_type.json");
+        String json = Utils.readJsonFromResource("actions/action_invalid_function_type.json");
 
         // Attempt to deserialize the JSON
         ObjectMapper mapper = new ObjectMapper();
@@ -109,7 +89,7 @@ public class ActionJsonDeserializerTest {
     @Test
     public void testDeserializeMissingFields() throws IOException {
         // Read JSON with missing fields from resource file
-        String json = readJsonFromResource("actions/action_missing_fields.json");
+        String json = Utils.readJsonFromResource("actions/action_missing_fields.json");
 
         // Attempt to deserialize the JSON
         ObjectMapper mapper = new ObjectMapper();
@@ -119,7 +99,7 @@ public class ActionJsonDeserializerTest {
     @Test
     public void testDeserializeInvalidEventType() throws IOException {
         // Read JSON with an invalid event type from resource file
-        String json = readJsonFromResource("actions/action_invalid_event_type.json");
+        String json = Utils.readJsonFromResource("actions/action_invalid_event_type.json");
 
         // Attempt to deserialize the JSON
         ObjectMapper mapper = new ObjectMapper();

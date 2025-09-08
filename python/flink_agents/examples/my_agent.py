@@ -16,13 +16,16 @@
 # limitations under the License.
 #################################################################################
 import copy
+import random
+import time
 from typing import Any, Optional
 
 from pydantic import BaseModel
 
 from flink_agents.api.agent import Agent
-from flink_agents.api.decorators import action
-from flink_agents.api.event import Event, InputEvent, OutputEvent
+from flink_agents.api.decorators import action, tool
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
 
@@ -48,7 +51,6 @@ class ItemData(BaseModel):
 class MyEvent(Event):  # noqa D101
     value: Any
 
-
 class DataStreamAgent(Agent):
     """Agent used for explaining integrating agents with DataStream.
 
@@ -57,37 +59,59 @@ class DataStreamAgent(Agent):
     to __main__.
     """
 
+    @tool
+    @staticmethod
+    def my_tool(input: str) -> str:
+        """Mark call tool.
+
+        Parameters
+        ----------
+        input : str
+            The input string
+
+        Returns:
+        -------
+        str:
+            The return string
+        """
+        return input + " call my tool"
+
     @action(InputEvent)
     @staticmethod
     def first_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.input
+        def log_to_stdout(input: Any, total: int) -> bool:
+            # Simulating asynchronous time consumption
+            time.sleep(random.random())
+            print(f"[log_to_stdout] Logging input={input}, total reviews now={total}")
+            return True
 
+        input_data = event.input
         stm = ctx.get_short_term_memory()
-        status = stm.new_object("status", overwrite = True)
 
-        total = 0
-        if stm.is_exist("status.total_reviews"):
-            total = status.get("total_reviews")
-        total += 1
-        status.set("total_reviews", total)
+        current_total = stm.get("status.total_reviews") or 0
+        total = current_total + 1
+        stm.set("status.total_reviews", total)
 
-        content = copy.deepcopy(input)
-        content.review += " first action"
-        ctx.send_event(MyEvent(value=content))
+        log_success = yield from ctx.execute_async(log_to_stdout, input_data, total)
+
+        content = copy.deepcopy(input_data)
+        content.review += " first action, log success=" + str(log_success) + ","
+        content.memory_info = {"total_reviews": total}
+
+        data_ref = stm.set(f"processed_items.item_{content.id}", content)
+        ctx.send_event(MyEvent(value=data_ref.model_dump()))
 
     @action(MyEvent)
     @staticmethod
     def second_action(event: Event, ctx: RunnerContext):  # noqa D102
-        input = event.value
-
+        input_data = event.value
         stm = ctx.get_short_term_memory()
-        memory_info = {
-            "total_reviews": stm.get("status.total_reviews"),
-        }
+        resolved_data: ItemData = stm.get(input_data)
 
-        content = copy.deepcopy(input)
+        content = copy.deepcopy(resolved_data)
         content.review += " second action"
-        content.memory_info = memory_info
+        tool = ctx.get_resource("my_tool", ResourceType.TOOL)
+        content.review = tool.call(content.review)
         ctx.send_event(OutputEvent(output=content))
 
 

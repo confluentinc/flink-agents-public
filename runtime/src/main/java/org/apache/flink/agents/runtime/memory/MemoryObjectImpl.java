@@ -18,8 +18,10 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.api.common.state.MapState;
 
+import java.io.Serializable;
 import java.util.*;
 
 public class MemoryObjectImpl implements MemoryObject {
@@ -34,10 +36,18 @@ public class MemoryObjectImpl implements MemoryObject {
 
     private final MapState<String, MemoryItem> store;
     private final String prefix;
+    private final Runnable mailboxThreadChecker;
 
     public MemoryObjectImpl(MapState<String, MemoryItem> store, String prefix) throws Exception {
+        this(store, prefix, () -> {});
+    }
+
+    public MemoryObjectImpl(
+            MapState<String, MemoryItem> store, String prefix, Runnable mailboxThreadChecker)
+            throws Exception {
         this.store = store;
         this.prefix = prefix;
+        this.mailboxThreadChecker = mailboxThreadChecker;
         if (!store.contains(ROOT_KEY)) {
             store.put(ROOT_KEY, new MemoryItem());
         }
@@ -45,6 +55,7 @@ public class MemoryObjectImpl implements MemoryObject {
 
     @Override
     public MemoryObject get(String path) throws Exception {
+        mailboxThreadChecker.run();
         String absPath = fullPath(path);
         if (store.contains(absPath)) {
             return new MemoryObjectImpl(store, absPath);
@@ -53,7 +64,13 @@ public class MemoryObjectImpl implements MemoryObject {
     }
 
     @Override
-    public void set(String path, Object value) throws Exception {
+    public MemoryObject get(MemoryRef ref) throws Exception {
+        return get(ref.getPath());
+    }
+
+    @Override
+    public MemoryRef set(String path, Object value) throws Exception {
+        mailboxThreadChecker.run();
         String absPath = fullPath(path);
         String[] parts = absPath.split("\\.");
         fillParents(parts);
@@ -73,10 +90,13 @@ public class MemoryObjectImpl implements MemoryObject {
 
         MemoryItem val = new MemoryItem(value);
         store.put(absPath, val);
+
+        return MemoryRef.create(absPath);
     }
 
     @Override
     public MemoryObject newObject(String path, boolean overwrite) throws Exception {
+        mailboxThreadChecker.run();
         String absPath = fullPath(path);
         String[] parts = absPath.split("\\.");
 
@@ -108,6 +128,7 @@ public class MemoryObjectImpl implements MemoryObject {
 
     @Override
     public boolean isExist(String path) {
+        mailboxThreadChecker.run();
         try {
             return store.contains(fullPath(path));
         } catch (Exception e) {
@@ -117,6 +138,7 @@ public class MemoryObjectImpl implements MemoryObject {
 
     @Override
     public List<String> getFieldNames() throws Exception {
+        mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         if (memItem != null && memItem.getType() == ItemType.OBJECT) {
             return new ArrayList<>(memItem.getSubKeys());
@@ -126,6 +148,7 @@ public class MemoryObjectImpl implements MemoryObject {
 
     @Override
     public Map<String, Object> getFields() throws Exception {
+        mailboxThreadChecker.run();
         Map<String, Object> result = new HashMap<>();
         for (String name : getFieldNames()) {
             String absPath = fullPath(name);
@@ -141,12 +164,14 @@ public class MemoryObjectImpl implements MemoryObject {
 
     @Override
     public boolean isNestedObject() throws Exception {
+        mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         return memItem != null && memItem.getType() == ItemType.OBJECT;
     }
 
     @Override
     public Object getValue() throws Exception {
+        mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         if (memItem != null && memItem.getType() == ItemType.VALUE) {
             return memItem.getValue();
@@ -181,7 +206,7 @@ public class MemoryObjectImpl implements MemoryObject {
     }
 
     /** Represents an item (nested object or primitive value) stored in the short-term memory. */
-    public static final class MemoryItem {
+    public static final class MemoryItem implements Serializable {
         private final ItemType type;
         private final Object value;
         private final Set<String> subKeys;

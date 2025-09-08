@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.Action;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.shaded.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,17 +42,18 @@ public class AgentPlanJsonSerializerTest {
     /** Test Agent class with @Action annotated methods. */
     public static class TestAgent extends Agent {
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {InputEvent.class})
         public void handleInputEvent(InputEvent event, RunnerContext context) {
             // Test action logic
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(listenEvents = {OutputEvent.class})
         public void processOutputEvent(OutputEvent event, RunnerContext context) {
             // Test action logic
         }
 
-        @org.apache.flink.agents.api.Action(listenEvents = {InputEvent.class, OutputEvent.class})
+        @org.apache.flink.agents.api.annotation.Action(
+                listenEvents = {InputEvent.class, OutputEvent.class})
         public void handleMultipleEvents(Event event, RunnerContext context) {
             // Test action logic for multiple event types
         }
@@ -189,8 +191,12 @@ public class AgentPlanJsonSerializerTest {
         // Create a test agent
         TestAgent agent = new TestAgent();
 
+        Map<String, Object> confData = new HashMap<>();
+        confData.put("config.key", "config.value");
+        AgentConfiguration agentConfiguration = new AgentConfiguration(confData);
+
         // Create AgentPlan from the agent
-        AgentPlan agentPlan = new AgentPlan(agent);
+        AgentPlan agentPlan = new AgentPlan(agent, agentConfiguration);
 
         // Serialize the agent plan to JSON
         String json = new ObjectMapper().writeValueAsString(agentPlan);
@@ -198,6 +204,7 @@ public class AgentPlanJsonSerializerTest {
         // Verify the JSON contains the expected fields
         assertThat(json).contains("\"actions\":{");
         assertThat(json).contains("\"actions_by_event\":{");
+        assertThat(json).contains("\"config\":{");
 
         // Verify that the actions from @Action annotated methods are present
         assertThat(json).contains("\"handleInputEvent\"");
@@ -216,5 +223,8 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify that regularMethod is not included (not annotated)
         assertThat(json).doesNotContain("\"regularMethod\"");
+
+        // Verify that config data from AgentConfiguration is present
+        assertThat(json).contains("\"conf_data\":{\"config.key\":\"config.value\"}");
     }
 }
